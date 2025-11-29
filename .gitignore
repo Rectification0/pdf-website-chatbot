@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.pyc
+venv/
+env/
+.env
+
+# Streamlit
+.streamlit/secrets.toml
+
+# Chroma database (huge!)
+chroma_db/
+chroma/
+
+# Temp files
+temp.pdf
+*.tmp
+
+# IDE
+.vscode/
+.idea/
