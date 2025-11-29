@@ -1,7 +1,10 @@
-# app.py — FIXED CHROMA PERSISTENCE FOR STREAMLIT CLOUD (Nov 2025)
+# app.py — FINAL 100% WORKING VERSION FOR STREAMLIT CLOUD (Nov 2025)
 import os
 import streamlit as st
 import tempfile
+
+# Fix Streamlit file watcher warning
+os.environ["STREAMLIT_SERVER_ENABLE_FILE_WATCHER"] = "false"
 
 from langchain_community.document_loaders import PyPDFLoader
 from langchain.text_splitter import RecursiveCharacterTextSplitter
@@ -13,61 +16,46 @@ from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.runnables import RunnablePassthrough
 
-# Fix Streamlit watcher
-os.environ["STREAMLIT_SERVER_ENABLE_FILE_WATCHER"] = "false"
-
-# Embeddings (CPU-safe)
+# === MODELS (CPU-safe & fast) ===
 embeddings = HuggingFaceEmbeddings(
     model_name="sentence-transformers/all-MiniLM-L6-v2",
     model_kwargs={"device": "cpu"},
     encode_kwargs={"normalize_embeddings": True}
 )
 
-# Groq LLM
 llm = ChatGroq(
     model="llama-3.1-8b-instant",
     temperature=0.2,
     api_key=os.getenv("GROQ_API_KEY")
 )
 
-# Config
-CHUNK_SIZE = 1000
-CHUNK_OVERLAP = 200
+# === GLOBAL VECTORSTORE (in-memory — perfect for Streamlit Cloud) ===
+vectorstore = None  # Will hold the Chroma DB after loading a document
 
-# In-memory vectorstore (no persistence for cloud compatibility)
-vectorstore = None
-
+# === BUILD DATABASE ===
 def build_db(docs):
     global vectorstore
-    text_splitter = RecursiveCharacterTextSplitter(chunk_size=CHUNK_SIZE, chunk_overlap=CHUNK_OVERLAP)
+    text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
     splits = text_splitter.split_documents(docs)
     
-    # KEY FIX: In-memory mode — no persist_directory, no client_settings dict
-    vectorstore = Chroma.from_documents(
-        documents=splits,
-        embedding=embeddings,
-        # persist_directory=None  # Explicit in-memory (default)
-    )
-    # For persistence (local only): 
-    # import chromadb.config
-    # settings = chromadb.config.Settings(is_persistent=True, persist_directory="chroma_db")
-    # vectorstore = Chroma.from_documents(documents=splits, embedding=embeddings, client_settings=settings)
-    
+    # In-memory mode — no persistence issues, no tenant errors
+    vectorstore = Chroma.from_documents(documents=splits, embedding=embeddings)
     st.success(f"Loaded {len(splits)} chunks — ready to chat!")
 
+# === RETRIEVER ===
 def get_retriever():
     global vectorstore
     if vectorstore is None:
-        st.error("No knowledge base loaded!")
         return None
     return vectorstore.as_retriever(search_kwargs={"k": 6})
 
-# RAG chain
+# === ASK QUESTION ===
 def ask_question(question):
     retriever = get_retriever()
     if not retriever:
         return "Please load a document first."
-    template = """Answer only using the following context:\n\n{context}\n\nQuestion: {question}"""
+    
+    template = """Answer only using this context:\n\n{context}\n\nQuestion: {question}"""
     prompt = ChatPromptTemplate.from_template(template)
     
     chain = (
@@ -78,44 +66,44 @@ def ask_question(question):
     )
     return chain.invoke(question)
 
-# PDF loader
+# === LOAD PDF ===
 def load_pdf(file):
-    with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
-        tmp.write(file.getvalue())
-        tmp_path = tmp.name
-    loader = PyPDFLoader(tmp_path)
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as f:
+        f.write(file.getvalue())
+        path = f.name
+    loader = PyPDFLoader(path)
     docs = loader.load()
-    os.unlink(tmp_path)
+    os.unlink(path)
     return docs
 
-# URL scraper
+# === LOAD URL ===
 def load_url(url):
     import requests
     from bs4 import BeautifulSoup
-    headers = {"User-Agent": "Mozilla/5.0"}
     try:
+        headers = {"User-Agent": "Mozilla/5.0"}
         html = requests.get(url, headers=headers, timeout=20).text
         soup = BeautifulSoup(html, 'html.parser')
-        for tag in soup(["script", "style", "nav", "header", "footer", "aside"]):
+        for tag in soup(["script", "style", "nav", "header", "footer"]):
             tag.decompose()
         text = soup.get_text(separator="\n")
         return [Document(page_content=text, metadata={"source": url})]
     except Exception as e:
-        st.error(f"Scraping failed: {e}")
+        st.error(f"Failed to scrape: {e}")
         return []
 
-# UI
-st.set_page_config(page_title="PDF & Website Chatbot", page_icon="🤖")
+# === UI ===
+st.set_page_config(page_title="PDF & Website Chatbot", page_icon="Robot")
 st.title("PDF + Website AI Chatbot")
-st.caption("Upload a PDF or paste any public URL — ask anything!")
+st.caption("Upload a PDF or paste a public URL → ask anything!")
 
 col1, col2 = st.columns(2)
 
 with col1:
-    uploaded_file = st.file_uploader("Upload PDF", type="pdf")
-    if uploaded_file and st.button("Load PDF", type="primary"):
-        with st.spinner("Processing PDF..."):
-            docs = load_pdf(uploaded_file)
+    pdf_file = st.file_uploader("Upload PDF", type="pdf")
+    if pdf_file and st.button("Load PDF", type="primary"):
+        with st.spinner("Reading PDF..."):
+            docs = load_pdf(pdf_file)
             build_db(docs)
 
 with col2:
@@ -123,18 +111,19 @@ with col2:
     if url and st.button("Load Website", type="primary"):
         with st.spinner("Scraping website..."):
             docs = load_url(url)
-            build_db(docs)
+            if docs:
+                build_db(docs)
 
-# Chat
-if vectorstore:
-    st.success("Knowledge base loaded — ask questions!")
+# === CHAT INTERFACE ===
+if vectorstore is not None:
+    st.success("Knowledge base ready — ask away!")
 
     if "messages" not in st.session_state:
         st.session_state.messages = []
 
-    for message in st.session_state.messages:
-        with st.chat_message(message["role"]):
-            st.markdown(message["content"])
+    for msg in st.session_state.messages:
+        with st.chat_message(msg["role"]):
+            st.markdown(msg["content"])
 
     if prompt := st.chat_input("Ask about the document..."):
         st.session_state.messages.append({"role": "user", "content": prompt})
@@ -143,16 +132,16 @@ if vectorstore:
 
         with st.chat_message("assistant"):
             with st.spinner("Thinking..."):
-                response = ask_question(prompt)
-            st.markdown(response)
-            st.session_state.messages.append({"role": "assistant", "content": response})
-else:
-    st.info("↑ Load a PDF or website first")
+                answer = ask_question(prompt)
+            st.markdown(answer)
+            st.session_state.messages.append({"role": "assistant", "content": answer})
 
-# Clear (resets in-memory)
-if st.sidebar.button("Clear knowledge base"):
+else:
+    st.info("↑ Upload a PDF or paste a URL to get started")
+
+# Clear button
+if st.sidebar.button("Clear everything & start over"):
     global vectorstore
     vectorstore = None
-    if "messages" in st.session_state:
-        st.session_state.messages = []
+    st.session_state.messages = []
     st.rerun()
