@@ -10,3 +10,4 @@ unstructured[all-docs]==0.15.4
 firecrawl-py==0.1.2
 python-dotenv==1.0.1
 chromadb==0.5.5
+langchain[all]==0.3.1
