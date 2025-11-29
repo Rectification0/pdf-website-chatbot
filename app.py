@@ -1,10 +1,10 @@
-# app.py — FINAL WORKING VERSION FOR STREAMLIT CLOUD (Nov 2025)
+# app.py — FIXED FOR CHROMA TENANT ERROR IN STREAMLIT CLOUD (Nov 2025)
 import os
 import streamlit as st
 import shutil
 import tempfile
 
-# Fix Streamlit + Torch inspection bugs
+# Fix Streamlit watcher (harmless)
 os.environ["STREAMLIT_SERVER_ENABLE_FILE_WATCHER"] = "false"
 
 from langchain_community.document_loaders import PyPDFLoader
@@ -17,45 +17,54 @@ from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.runnables import RunnablePassthrough
 
-# === EMBEDDINGS THAT WORK ON STREAMLIT CLOUD (CPU-only, no meta-tensor crash) ===
+# Cloud embeddings (CPU-safe, no meta crash)
 embeddings = HuggingFaceEmbeddings(
     model_name="sentence-transformers/all-MiniLM-L6-v2",
     model_kwargs={"device": "cpu"},
     encode_kwargs={"normalize_embeddings": True}
 )
 
-# === LLM — Groq (blazing fast & free tier) ===
+# Groq LLM (fast & free)
 llm = ChatGroq(
     model="llama-3.1-8b-instant",
     temperature=0.2,
-    api_key=os.getenv("GROQ_API_KEY")  # you already have this in Secrets
+    api_key=os.getenv("GROQ_API_KEY")
 )
 
-# === CONFIG ===
+# Config
 DB_PATH = "chroma_db"
 CHUNK_SIZE = 1000
 CHUNK_OVERLAP = 200
 
-# === VECTOR DB ===
+# Fixed DB build (with allow_reset=True to skip tenant validation)
 def build_db(docs):
     text_splitter = RecursiveCharacterTextSplitter(chunk_size=CHUNK_SIZE, chunk_overlap=CHUNK_OVERLAP)
     splits = text_splitter.split_documents(docs)
     
+    # Clean old DB
     if os.path.exists(DB_PATH):
         shutil.rmtree(DB_PATH)
     
+    # KEY FIX: allow_reset=True bypasses tenant/database validation in cloud
     Chroma.from_documents(
         documents=splits,
         embedding=embeddings,
-        persist_directory=DB_PATH
+        persist_directory=DB_PATH,
+        collection_metadata={"hnsw:space": "cosine"},  # Optional: better search
+        client_settings={"allow_reset": True}  # ← THIS SOLVES THE TENANT ERROR
     )
     st.success(f"Loaded {len(splits)} chunks — ready to chat!")
 
 def get_retriever():
-    vectorstore = Chroma(persist_directory=DB_PATH, embedding_function=embeddings)
+    # Load with same settings
+    vectorstore = Chroma(
+        persist_directory=DB_PATH, 
+        embedding_function=embeddings,
+        client_settings={"allow_reset": True}
+    )
     return vectorstore.as_retriever(search_kwargs={"k": 6})
 
-# === RAG CHAIN ===
+# RAG chain
 def ask_question(question):
     retriever = get_retriever()
     template = """Answer only using the following context:\n\n{context}\n\nQuestion: {question}"""
@@ -69,7 +78,7 @@ def ask_question(question):
     )
     return chain.invoke(question)
 
-# === PDF & URL LOADERS ===
+# PDF loader
 def load_pdf(file):
     with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
         tmp.write(file.getvalue())
@@ -79,18 +88,23 @@ def load_pdf(file):
     os.unlink(tmp_path)
     return docs
 
+# URL scraper
 def load_url(url):
     import requests
     from bs4 import BeautifulSoup
     headers = {"User-Agent": "Mozilla/5.0"}
-    html = requests.get(url, headers=headers, timeout=20).text
-    soup = BeautifulSoup(html, 'html.parser')
-    for tag in soup(["script", "style", "nav", "header", "footer", "aside"]):
-        tag.decompose()
-    text = soup.get_text(separator="\n")
-    return [Document(page_content=text, metadata={"source": url})]
+    try:
+        html = requests.get(url, headers=headers, timeout=20).text
+        soup = BeautifulSoup(html, 'html.parser')
+        for tag in soup(["script", "style", "nav", "header", "footer", "aside"]):
+            tag.decompose()
+        text = soup.get_text(separator="\n")
+        return [Document(page_content=text, metadata={"source": url})]
+    except Exception as e:
+        st.error(f"Scraping failed: {e}")
+        return []
 
-# === UI ===
+# UI
 st.set_page_config(page_title="PDF & Website Chatbot", page_icon="🤖")
 st.title("PDF + Website AI Chatbot")
 st.caption("Upload a PDF or paste any public URL — ask anything!")
@@ -111,7 +125,7 @@ with col2:
             docs = load_url(url)
             build_db(docs)
 
-# === CHAT ===
+# Chat
 if os.path.exists(DB_PATH):
     st.success("Knowledge base loaded — ask questions!")
 
@@ -135,9 +149,10 @@ if os.path.exists(DB_PATH):
 else:
     st.info("↑ Load a PDF or website first")
 
-# Clear button
+# Clear
 if st.sidebar.button("Clear database (start fresh)"):
     if os.path.exists(DB_PATH):
         shutil.rmtree(DB_PATH)
-    st.session_state.messages = []
+    if "messages" in st.session_state:
+        st.session_state.messages = []
     st.rerun()
