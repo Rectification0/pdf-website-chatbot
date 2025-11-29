@@ -1,9 +1,23 @@
 # app.py   ←←←  WINDOWS VERSION (fully tested Nov 2025)
+# ——— AUTO SWITCH: Ollama locally ↔ Groq + HuggingFace in cloud ———
+import os
+from langchain_groq import ChatGroq
+from langchain_huggingface import HuggingFaceEmbeddings
+
+if os.getenv("GROQ_API_KEY"):  # This is true only in Streamlit Cloud after you add the secret
+    # ← Cloud mode (super fast, no Ollama needed)
+    embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
+    llm = ChatGroq(model="llama-3.1-8b-instant", temperature=0.2)
+else:
+    # ← Local Windows mode (uses your Ollama)
+    from langchain_ollama import OllamaEmbeddings, ChatOllama
+    embeddings = OllamaEmbeddings(model="nomic-embed-text")
+    llm = ChatOllama(model="llama3.2", temperature=0.2)
+# —————————————————————————————————————————————————————————————
 import streamlit as st
 from langchain_community.document_loaders import PyPDFLoader
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_chroma import Chroma
-from langchain_ollama import OllamaEmbeddings, ChatOllama
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.runnables import RunnablePassthrough
@@ -24,8 +38,7 @@ CHUNK_SIZE = 1000
 CHUNK_OVERLAP = 200
 DB_PATH = "chroma_db"
 
-embeddings = OllamaEmbeddings(model=EMBEDDING_MODEL)
-llm = ChatOllama(model=LLM_MODEL, temperature=0.2)
+
 
 # -----------------------------
 # Helper Functions
