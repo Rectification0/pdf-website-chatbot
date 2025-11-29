@@ -1,11 +1,7 @@
-# app.py — FIXED FOR CHROMA TENANT ERROR IN STREAMLIT CLOUD (Nov 2025)
+# app.py — FIXED CHROMA PERSISTENCE FOR STREAMLIT CLOUD (Nov 2025)
 import os
 import streamlit as st
-import shutil
 import tempfile
-
-# Fix Streamlit watcher (harmless)
-os.environ["STREAMLIT_SERVER_ENABLE_FILE_WATCHER"] = "false"
 
 from langchain_community.document_loaders import PyPDFLoader
 from langchain.text_splitter import RecursiveCharacterTextSplitter
@@ -17,14 +13,17 @@ from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.runnables import RunnablePassthrough
 
-# Cloud embeddings (CPU-safe, no meta crash)
+# Fix Streamlit watcher
+os.environ["STREAMLIT_SERVER_ENABLE_FILE_WATCHER"] = "false"
+
+# Embeddings (CPU-safe)
 embeddings = HuggingFaceEmbeddings(
     model_name="sentence-transformers/all-MiniLM-L6-v2",
     model_kwargs={"device": "cpu"},
     encode_kwargs={"normalize_embeddings": True}
 )
 
-# Groq LLM (fast & free)
+# Groq LLM
 llm = ChatGroq(
     model="llama-3.1-8b-instant",
     temperature=0.2,
@@ -32,41 +31,42 @@ llm = ChatGroq(
 )
 
 # Config
-DB_PATH = "chroma_db"
 CHUNK_SIZE = 1000
 CHUNK_OVERLAP = 200
 
-# Fixed DB build (with allow_reset=True to skip tenant validation)
+# In-memory vectorstore (no persistence for cloud compatibility)
+vectorstore = None
+
 def build_db(docs):
+    global vectorstore
     text_splitter = RecursiveCharacterTextSplitter(chunk_size=CHUNK_SIZE, chunk_overlap=CHUNK_OVERLAP)
     splits = text_splitter.split_documents(docs)
     
-    # Clean old DB
-    if os.path.exists(DB_PATH):
-        shutil.rmtree(DB_PATH)
-    
-    # KEY FIX: allow_reset=True bypasses tenant/database validation in cloud
-    Chroma.from_documents(
+    # KEY FIX: In-memory mode — no persist_directory, no client_settings dict
+    vectorstore = Chroma.from_documents(
         documents=splits,
         embedding=embeddings,
-        persist_directory=DB_PATH,
-        collection_metadata={"hnsw:space": "cosine"},  # Optional: better search
-        client_settings={"allow_reset": True}  # ← THIS SOLVES THE TENANT ERROR
+        # persist_directory=None  # Explicit in-memory (default)
     )
+    # For persistence (local only): 
+    # import chromadb.config
+    # settings = chromadb.config.Settings(is_persistent=True, persist_directory="chroma_db")
+    # vectorstore = Chroma.from_documents(documents=splits, embedding=embeddings, client_settings=settings)
+    
     st.success(f"Loaded {len(splits)} chunks — ready to chat!")
 
 def get_retriever():
-    # Load with same settings
-    vectorstore = Chroma(
-        persist_directory=DB_PATH, 
-        embedding_function=embeddings,
-        client_settings={"allow_reset": True}
-    )
+    global vectorstore
+    if vectorstore is None:
+        st.error("No knowledge base loaded!")
+        return None
     return vectorstore.as_retriever(search_kwargs={"k": 6})
 
 # RAG chain
 def ask_question(question):
     retriever = get_retriever()
+    if not retriever:
+        return "Please load a document first."
     template = """Answer only using the following context:\n\n{context}\n\nQuestion: {question}"""
     prompt = ChatPromptTemplate.from_template(template)
     
@@ -126,7 +126,7 @@ with col2:
             build_db(docs)
 
 # Chat
-if os.path.exists(DB_PATH):
+if vectorstore:
     st.success("Knowledge base loaded — ask questions!")
 
     if "messages" not in st.session_state:
@@ -149,10 +149,10 @@ if os.path.exists(DB_PATH):
 else:
     st.info("↑ Load a PDF or website first")
 
-# Clear
-if st.sidebar.button("Clear database (start fresh)"):
-    if os.path.exists(DB_PATH):
-        shutil.rmtree(DB_PATH)
+# Clear (resets in-memory)
+if st.sidebar.button("Clear knowledge base"):
+    global vectorstore
+    vectorstore = None
     if "messages" in st.session_state:
         st.session_state.messages = []
     st.rerun()
