@@ -1,0 +1,27 @@
+name: Deploy to Streamlit Community Cloud
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install all packages
+        run: |
+          pip install --upgrade pip
+          pip install langchain langchain-community langchain-chroma langchain-ollama beautifulsoup4 requests pypdf unstructured[all-docs] firecrawl-py python-dotenv streamlit
+
+      - name: Deploy to Streamlit Cloud
+        uses: streamlit/streamlit-deploy@v1
+        with:
+          app-url: https://pdf-rag-chat.streamlit.app   # ← CHANGE THIS LINE ONLY
