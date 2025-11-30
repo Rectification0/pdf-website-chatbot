@@ -4,11 +4,13 @@ langchain-community==0.3.0
 langchain-huggingface==0.1.0
 langchain-chroma==0.1.4
 chromadb==0.5.11
-sentence-transformers==3.1.1
-huggingface-hub==0.25.1
+sentence-transformers==0.1.0
 pypdf==5.0.0
 python-dotenv==1.0.1
---index-url https://download.pytorch.org/whl/cpu
-torch==2.5.1
-torchvision==0.20.1
-torchaudio==2.5.1
+langchain-groq==0.2.0
+
+# PyTorch CPU-only – use --extra-index-url so PyPI is still used for everything else
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch==2.5.1+cpu
+torchvision==0.20.1+cpu
+torchaudio==2.5.1+cpu
