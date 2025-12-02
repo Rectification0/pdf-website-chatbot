@@ -216,9 +216,94 @@ if log_summary:
 
 
 # --- Helper Functions ---
-def scrape_website(url: str) -> dict:
-    """Scrape content from a website"""
+def validate_url(url: str) -> dict:
+    """Validate URL and check for potentially problematic domains"""
+    
+    # Blocked/sensitive domain patterns
+    blocked_patterns = [
+        "bank", "paypal", "stripe", "payment",
+        "login", "signin", "auth", "account",
+        "admin", "dashboard", "portal",
+        "medical", "health", "patient",
+        "gov", "military", "defense",
+        "private", "internal", "intranet"
+    ]
+    
+    # Suspicious TLDs
+    suspicious_tlds = [".onion", ".i2p"]
+    
     try:
+        parsed = urlparse(url.lower())
+        
+        # Check if URL has scheme
+        if not parsed.scheme:
+            return {"valid": False, "error": "Invalid URL: Missing http:// or https://"}
+        
+        # Only allow http and https
+        if parsed.scheme not in ["http", "https"]:
+            return {"valid": False, "error": "Only HTTP and HTTPS protocols are allowed"}
+        
+        # Check for localhost/private IPs
+        if any(x in parsed.netloc for x in ["localhost", "127.0.0.1", "0.0.0.0", "192.168.", "10."]):
+            return {"valid": False, "error": "Cannot scrape local or private network addresses"}
+        
+        # Check for blocked patterns
+        for pattern in blocked_patterns:
+            if pattern in parsed.netloc or pattern in parsed.path:
+                return {
+                    "valid": False, 
+                    "error": f"This appears to be a sensitive website ({pattern}). Scraping is not allowed for security and privacy reasons."
+                }
+        
+        # Check for suspicious TLDs
+        for tld in suspicious_tlds:
+            if parsed.netloc.endswith(tld):
+                return {"valid": False, "error": "This domain type is not supported"}
+        
+        return {"valid": True}
+        
+    except Exception as e:
+        return {"valid": False, "error": f"Invalid URL format: {str(e)}"}
+
+
+def check_robots_txt(url: str) -> dict:
+    """Check if scraping is allowed by robots.txt"""
+    try:
+        parsed = urlparse(url)
+        robots_url = f"{parsed.scheme}://{parsed.netloc}/robots.txt"
+        
+        response = requests.get(robots_url, timeout=5)
+        if response.status_code == 200:
+            robots_content = response.text.lower()
+            
+            # Simple check for disallow rules
+            if "disallow: /" in robots_content and "user-agent: *" in robots_content:
+                return {
+                    "allowed": False,
+                    "warning": "This website's robots.txt discourages scraping. Please respect their wishes."
+                }
+        
+        return {"allowed": True}
+    except:
+        # If robots.txt doesn't exist or can't be accessed, proceed with caution
+        return {"allowed": True, "warning": "Could not check robots.txt"}
+
+
+def scrape_website(url: str) -> dict:
+    """Scrape content from a website with safety checks"""
+    try:
+        # Validate URL first
+        validation = validate_url(url)
+        if not validation["valid"]:
+            logger.log_error("URL_VALIDATION_FAILED", validation["error"], {"url": url})
+            return {"success": False, "error": validation["error"]}
+        
+        # Check robots.txt
+        robots_check = check_robots_txt(url)
+        if not robots_check.get("allowed", True):
+            logger.log_error("ROBOTS_TXT_DISALLOW", robots_check["warning"], {"url": url})
+            return {"success": False, "error": robots_check["warning"]}
+        
         logger.log_event("WEBSITE_SCRAPE_START", {"url": url})
         
         headers = {
@@ -251,7 +336,13 @@ def scrape_website(url: str) -> dict:
         
         logger.log_website_scraping(url, len(text), success=True)
 
-        return {"success": True, "title": title_text, "content": text, "url": url}
+        return {
+            "success": True, 
+            "title": title_text, 
+            "content": text, 
+            "url": url,
+            "warning": robots_check.get("warning")
+        }
 
     except requests.exceptions.RequestException as e:
         error_msg = f"Failed to fetch URL: {str(e)}"
@@ -491,6 +582,34 @@ Answer (based ONLY on the PDF content above):"""
 with col2:
     st.header("🌐 Website Chatbot")
     st.caption("Enter a website URL and ask questions about its content")
+    
+    # Ethical usage disclaimer
+    with st.expander("⚠️ Responsible Web Scraping Guidelines"):
+        st.markdown("""
+        **Please use this tool responsibly:**
+        
+        ✅ **Allowed:**
+        - Public news websites and blogs
+        - Educational and research content
+        - Open documentation and wikis
+        - Your own websites
+        
+        ❌ **Not Allowed:**
+        - Banking or financial sites
+        - Login/authentication pages
+        - Medical or health records
+        - Government/military sites
+        - Paywalled content
+        - Private or internal networks
+        
+        **Legal Notice:**
+        - Only scrape publicly accessible content
+        - Respect website Terms of Service
+        - Use for personal/educational purposes only
+        - Do not use scraped content commercially without permission
+        
+        By using this tool, you agree to follow these guidelines and applicable laws.
+        """)
 
     website_url_input = st.text_input(
         "Enter Website URL", placeholder="https://example.com", key="website_url_input"
@@ -498,7 +617,7 @@ with col2:
 
     if website_url_input:
         if st.button("🔍 Scrape Website", type="primary", key="scrape_button"):
-            with st.spinner("Scraping website..."):
+            with st.spinner("Validating and scraping website..."):
                 result = scrape_website(website_url_input)
 
                 if result["success"]:
@@ -508,6 +627,10 @@ with col2:
                     st.session_state.website_processed = True
                     st.success(f"✅ Website scraped: {result['title']}")
                     st.caption(f"Content length: {len(result['content'])} characters")
+                    
+                    # Show warning if robots.txt had concerns
+                    if result.get("warning"):
+                        st.warning(f"⚠️ {result['warning']}")
                 else:
                     st.error(result["error"])
                     st.session_state.website_processed = False
