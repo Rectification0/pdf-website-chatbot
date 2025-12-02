@@ -344,6 +344,25 @@ with col1:
                 try:
                     logger.log_event("PDF_UPLOAD", {"filename": uploaded_file.name})
                     
+                    # Clear old vector database if it exists
+                    if "pdf_vectordb" in st.session_state:
+                        try:
+                            old_vectordb = st.session_state.pdf_vectordb
+                            old_vectordb.delete_collection()
+                            logger.log_event("VECTORDB_CLEARED", {"message": "Old vector database cleared"})
+                        except Exception as e:
+                            logger.log_error("VECTORDB_CLEAR_ERROR", str(e))
+                        
+                        # Remove from session state
+                        del st.session_state.pdf_vectordb
+                    
+                    # Clear old messages
+                    if "pdf_messages" in st.session_state:
+                        st.session_state.pdf_messages = []
+                    
+                    # Reset processed flag
+                    st.session_state.pdf_processed = False
+                    
                     temp_pdf = tempfile.NamedTemporaryFile(delete=False, suffix=".pdf")
                     temp_pdf.write(uploaded_file.read())
                     temp_pdf.close()
@@ -372,6 +391,7 @@ with col1:
                             st.success(
                                 f"✅ PDF processed! {len(splits)} chunks indexed from '{uploaded_file.name}'"
                             )
+                            st.info("💬 Previous chat history cleared. Ready for new questions!")
 
                     try:
                         os.unlink(temp_pdf.name)
@@ -472,19 +492,19 @@ with col2:
     st.header("🌐 Website Chatbot")
     st.caption("Enter a website URL and ask questions about its content")
 
-    website_url = st.text_input(
-        "Enter Website URL", placeholder="https://example.com", key="website_url"
+    website_url_input = st.text_input(
+        "Enter Website URL", placeholder="https://example.com", key="website_url_input"
     )
 
-    if website_url:
-        if st.button("🔍 Scrape Website", type="primary"):
+    if website_url_input:
+        if st.button("🔍 Scrape Website", type="primary", key="scrape_button"):
             with st.spinner("Scraping website..."):
-                result = scrape_website(website_url)
+                result = scrape_website(website_url_input)
 
                 if result["success"]:
                     st.session_state.website_content = result["content"]
                     st.session_state.website_title = result["title"]
-                    st.session_state.website_url = result["url"]
+                    st.session_state.scraped_url = result["url"]
                     st.session_state.website_processed = True
                     st.success(f"✅ Website scraped: {result['title']}")
                     st.caption(f"Content length: {len(result['content'])} characters")
@@ -521,7 +541,7 @@ with col2:
                         try:
                             website_content = st.session_state.website_content
                             website_title = st.session_state.website_title
-                            website_url = st.session_state.website_url
+                            website_url = st.session_state.scraped_url
 
                             # Limit content to avoid token limits
                             max_content_length = 15000
