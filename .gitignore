@@ -19,3 +19,7 @@ temp.pdf
 # IDE
 .vscode/
 .idea/
+
+# Log files
+chatbot_local_logs.json
+chatbot_web_logs.json
