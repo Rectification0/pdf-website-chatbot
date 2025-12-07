@@ -5,10 +5,10 @@ venv/
 env/
 .env
 
-# Streamlit
-.streamlit/secrets.toml
+# Streamlit (contains secrets — NEVER push)
+.streamlit/
 
-# Chroma database (huge!)
+# Chroma database (huge and auto-generated)
 chroma_db/
 chroma/
 
@@ -16,7 +16,7 @@ chroma/
 temp.pdf
 *.tmp
 
-# IDE
+# IDE / Editor folders
 .vscode/
 .idea/
 

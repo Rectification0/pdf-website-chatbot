@@ -171,20 +171,47 @@ logger.log_event("APP_START", {"message": "Application started"})
 # --- Sidebar Settings ---
 st.sidebar.header("⚙️ Settings")
 
-model_options = {
-    "llama-3.3-70b-versatile": "🚀 Llama 3.3 70B - Best overall (Recommended)",
-    "llama-3.1-70b-versatile": "⚡ Llama 3.1 70B - Very capable",
-    "llama-3.2-90b-text-preview": "🔥 Llama 3.2 90B - Most powerful",
-    "mixtral-8x7b-32768": "📚 Mixtral 8x7B - Large context (32k tokens)",
-    "llama-3.1-8b-instant": "💨 Llama 3.1 8B - Fastest",
+# -----------------------
+# Model dropdown (updated to include only currently-available Groq models + safe fallbacks)
+# Based on your `check_models.py` output, we prefer Groq models you own first.
+# Replace this block if you later get access to more models.
+# -----------------------
+
+# Preferred Groq models (from your available list)
+groq_models = {
+    "groq/compound": "Groq — compound (high-capacity, general purpose)",
+    "groq/compound-mini": "Groq — compound-mini (smaller, faster)"
 }
 
-model_name = st.sidebar.selectbox(
-    "Choose AI Model",
-    options=list(model_options.keys()),
-    format_func=lambda x: model_options[x],
-    index=0,
-)
+# Helpful fallback models you showed in your available list
+fallback_models = {
+    "openai/gpt-oss-120b": "OpenAI — GPT-OSS 120B (large-context, high capability)",
+    "openai/gpt-oss-20b": "OpenAI — GPT-OSS 20B (smaller & cheaper)",
+    "llama-3.3-70b-versatile": "Meta — Llama 3.3 70B (strong general model)",
+    "llama-3.1-8b-instant": "Meta — Llama 3.1 8B Instant (fast & cheap)",
+    "qwen/qwen3-32b": "Alibaba — Qwen3-32B (very large model)",
+    "moonshotai/kimi-k2-instruct-0905": "MoonshotAI — kimi-k2-instruct (instruct-tuned)",
+}
+
+# Merge into a single ordered dict to show Groq first, then fallbacks
+model_options = {}
+model_options.update(groq_models)
+model_options.update(fallback_models)
+
+# Build the sidebar selectbox (display user-friendly labels, but use model id as value)
+model_keys = list(model_options.keys())
+model_labels = [model_options[k] for k in model_keys]
+selected_index = 0  # default to first (groq/compound if present)
+
+# Display a nicer selectbox with labels but keep the id as the actual selection
+model_label = st.sidebar.selectbox("Choose AI Model", options=model_labels, index=selected_index)
+# find the model id corresponding to chosen label
+model_name = model_keys[model_labels.index(model_label)]
+
+# Warn user if they selected a model owned by another provider (optional)
+if model_name.startswith("openai/") or model_name.startswith("qwen/") or model_name.startswith("moonshotai/"):
+    st.sidebar.caption("Note: selected model is a fallback. Some models may require special access or billing.")
+
 
 temperature = st.sidebar.slider(
     "Temperature (creativity)",
@@ -364,23 +391,39 @@ def get_embeddings():
         logger.log_error("EMBEDDINGS_ERROR", str(e))
         raise
 
-
 def create_vectordb(documents):
-    """Create a new vector database from documents"""
+    """Create a new vector database from documents (safe: clears old persist dir first)"""
     try:
         logger.log_event("VECTORDB_CREATE_START", {"num_documents": len(documents)})
         
         embeddings = get_embeddings()
+        
+        # Use an explicit persist directory so files are predictable
+        persist_dir = "chroma_db"
+        
+        # Remove old directory if it exists to avoid leftover/corrupted files
+        try:
+            import shutil
+            if os.path.exists(persist_dir):
+                shutil.rmtree(persist_dir)
+                logger.log_event("VECTORDB_PERSIST_CLEANED", {"persist_dir": persist_dir})
+        except Exception as e:
+            logger.log_error("VECTORDB_CLEANUP_ERROR", str(e), {"persist_dir": persist_dir})
+        
         vectordb = Chroma.from_documents(
-            documents=documents, embedding=embeddings, collection_name="pdf_collection"
+            documents=documents,
+            embedding=embeddings,
+            persist_directory=persist_dir,
+            collection_name="pdf_collection"
         )
         
-        logger.log_event("VECTORDB_CREATE_SUCCESS", {"num_documents": len(documents)})
+        logger.log_event("VECTORDB_CREATE_SUCCESS", {"num_documents": len(documents), "persist_dir": persist_dir})
         return vectordb
     except Exception as e:
         logger.log_error("VECTORDB_CREATE_ERROR", str(e), {"num_documents": len(documents)})
         st.error(f"Error creating vector database: {e}")
         return None
+
 
 
 def get_llm(model: str, temp: float = 0.7, max_tok: int = 2048):
@@ -558,12 +601,24 @@ Answer (based ONLY on the PDF content above):"""
                             response = llm.invoke(formatted_prompt)
                             answer = response.content
 
+                            # ---- Show the answer in the chat normally ----
                             st.markdown(answer)
-                            st.session_state.pdf_messages.append(
-                                {"role": "assistant", "content": answer}
-                            )
-                            
+
+                            # ---- Also save to PDF chat history ----
+                            st.session_state.pdf_messages.append({"role": "assistant", "content": answer})
                             logger.log_chat_interaction("PDF", len(pdf_prompt), len(answer))
+
+                            # ---- Dedicated full-answer expander (separate UI area, prevents overlap) ----
+                            with st.expander("📚 Full PDF Answer (expand to view)", expanded=False):
+                                st.write(answer)
+                                # Optional: add a download link so user can open/save the exact output
+                                try:
+                                    from io import BytesIO
+                                    b = BytesIO(answer.encode("utf-8"))
+                                    st.download_button("⬇️ Download full answer (txt)", data=b, file_name="pdf_answer.txt", mime="text/plain")
+                                except Exception:
+                                    pass
+
 
                         except Exception as e:
                             error_msg = f"Error: {str(e)}"
@@ -704,12 +759,24 @@ Answer:"""
                             response = llm.invoke(formatted_prompt)
                             answer = response.content
 
+                            # ---- Show the answer in the chat normally ----
                             st.markdown(answer)
-                            st.session_state.website_messages.append(
-                                {"role": "assistant", "content": answer}
-                            )
-                            
+
+                            # ---- Also save to website chat history ----
+                            st.session_state.website_messages.append({"role": "assistant", "content": answer})
                             logger.log_chat_interaction("WEBSITE", len(web_prompt), len(answer))
+
+                            # ---- Dedicated full-answer expander (separate UI area, prevents overlap) ----
+                            with st.expander("🌐 Full Website Answer (expand to view)", expanded=False):
+                                st.write(answer)
+                                # Optional: add a download link so user can open/save the exact output
+                                try:
+                                    from io import BytesIO
+                                    b = BytesIO(answer.encode("utf-8"))
+                                    st.download_button("⬇️ Download full answer (txt)", data=b, file_name="website_answer.txt", mime="text/plain")
+                                except Exception:
+                                    pass
+
 
                         except Exception as e:
                             error_msg = f"Error: {str(e)}"
