@@ -72,9 +72,8 @@ The app will open in your browser at http://localhost:8501
 - Try a different PDF file
 - Check that the PDF contains extractable text (not just images)
 
-## Models Available
+## ## Models Available
 
-- llama-3.1-70b-versatile (most capable)
+- llama-3.3-70b-versatile (recommended - most capable)
 - llama-3.1-8b-instant (fastest)
 - mixtral-8x7b-32768 (large context)
-- gemma2-9b-it (balanced)

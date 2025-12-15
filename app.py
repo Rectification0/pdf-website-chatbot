@@ -14,12 +14,12 @@ try:
     from langchain_community.document_loaders import PyPDFLoader
     from langchain_text_splitters import RecursiveCharacterTextSplitter
     from langchain_huggingface import HuggingFaceEmbeddings
-    from langchain_chroma import Chroma
     from langchain_core.prompts import ChatPromptTemplate
     from langchain_groq import ChatGroq
     import requests
     from bs4 import BeautifulSoup
-    from urllib.parse import quote_plus, urlparse
+    from urllib.parse import urlparse
+    from langchain_community.vectorstores import FAISS
 except ImportError as e:
     st.error(f"Missing dependency: {e}")
     st.info("Please run: pip install -r requirements.txt")
@@ -29,39 +29,29 @@ except ImportError as e:
 # --- Logging System ---
 class ChatbotLogger:
     def __init__(self):
-        # Detect if running locally or on web
         self.is_local = self._is_local_deployment()
-        
-        # Set log file paths
         if self.is_local:
             self.log_file = "chatbot_local_logs.json"
             self.deployment_type = "LOCAL"
         else:
             self.log_file = "chatbot_web_logs.json"
             self.deployment_type = "WEB"
-        
-        # Initialize log file if it doesn't exist
         self._initialize_log_file()
     
     def _is_local_deployment(self):
-        """Detect if running locally or on web (Streamlit Cloud)"""
+        """Detect if running locally or on Streamlit Cloud"""
         try:
-            # Check for Streamlit Cloud environment variables
             if os.getenv("STREAMLIT_SHARING_MODE") or os.getenv("STREAMLIT_SERVER_HEADLESS"):
                 return False
-            
-            # Check hostname
             hostname = socket.gethostname()
             if "streamlit" in hostname.lower() or "cloud" in hostname.lower():
                 return False
-            
-            # Default to local
             return True
         except:
             return True
     
     def _initialize_log_file(self):
-        """Create log file if it doesn't exist"""
+        """Create log file if missing"""
         try:
             if not os.path.exists(self.log_file):
                 initial_data = {
@@ -75,7 +65,7 @@ class ChatbotLogger:
             print(f"Error initializing log file: {e}")
     
     def log_event(self, event_type, details, status="success"):
-        """Log an event with timestamp"""
+        """Append an event to the log file (best-effort)"""
         try:
             log_entry = {
                 "timestamp": datetime.now().isoformat(),
@@ -84,8 +74,6 @@ class ChatbotLogger:
                 "status": status,
                 "details": details
             }
-            
-            # Read existing logs
             try:
                 with open(self.log_file, 'r', encoding='utf-8') as f:
                     data = json.load(f)
@@ -95,21 +83,16 @@ class ChatbotLogger:
                     "created_at": datetime.now().isoformat(),
                     "logs": []
                 }
-            
-            # Append new log
             data["logs"].append(log_entry)
-            
-            # Write back to file
             with open(self.log_file, 'w', encoding='utf-8') as f:
                 json.dump(data, f, indent=2, ensure_ascii=False)
-            
             return True
         except Exception as e:
             print(f"Error logging event: {e}")
             return False
     
     def log_error(self, error_type, error_message, context=None):
-        """Log an error with details"""
+        """Log an error entry"""
         details = {
             "error_type": error_type,
             "error_message": str(error_message),
@@ -119,40 +102,28 @@ class ChatbotLogger:
     
     def log_pdf_processing(self, filename, chunks_count, success=True):
         """Log PDF processing event"""
-        details = {
-            "filename": filename,
-            "chunks_count": chunks_count
-        }
+        details = {"filename": filename, "chunks_count": chunks_count}
         status = "success" if success else "error"
         return self.log_event("PDF_PROCESSING", details, status=status)
     
     def log_website_scraping(self, url, content_length, success=True):
         """Log website scraping event"""
-        details = {
-            "url": url,
-            "content_length": content_length
-        }
+        details = {"url": url, "content_length": content_length}
         status = "success" if success else "error"
         return self.log_event("WEBSITE_SCRAPING", details, status=status)
     
     def log_chat_interaction(self, mode, question_length, answer_length):
         """Log chat interaction"""
-        details = {
-            "mode": mode,
-            "question_length": question_length,
-            "answer_length": answer_length
-        }
+        details = {"mode": mode, "question_length": question_length, "answer_length": answer_length}
         return self.log_event("CHAT_INTERACTION", details, status="success")
     
     def get_log_summary(self):
-        """Get summary of logs"""
+        """Return aggregated log summary"""
         try:
             with open(self.log_file, 'r', encoding='utf-8') as f:
                 data = json.load(f)
-            
             total_logs = len(data.get("logs", []))
             errors = sum(1 for log in data.get("logs", []) if log.get("status") == "error")
-            
             return {
                 "total_events": total_logs,
                 "total_errors": errors,
@@ -171,47 +142,19 @@ logger.log_event("APP_START", {"message": "Application started"})
 # --- Sidebar Settings ---
 st.sidebar.header("⚙️ Settings")
 
-# -----------------------
-# Model dropdown (updated to include only currently-available Groq models + safe fallbacks)
-# Based on your `check_models.py` output, we prefer Groq models you own first.
-# Replace this block if you later get access to more models.
-# -----------------------
-
-# Preferred Groq models (from your available list)
-groq_models = {
-    "groq/compound": "Groq — compound (high-capacity, general purpose)",
-    "groq/compound-mini": "Groq — compound-mini (smaller, faster)"
+# --- FIXED: Updated to currently available Groq models (as of Dec 2024) ---
+model_options = {
+    "llama-3.3-70b-versatile": "🚀 Llama 3.3 70B - Best overall (Recommended)",
+    "llama-3.1-8b-instant": "💨 Llama 3.1 8B - Fast responses",
+    "mixtral-8x7b-32768": "📚 Mixtral 8x7B - Large context",
 }
 
-# Helpful fallback models you showed in your available list
-fallback_models = {
-    "openai/gpt-oss-120b": "OpenAI — GPT-OSS 120B (large-context, high capability)",
-    "openai/gpt-oss-20b": "OpenAI — GPT-OSS 20B (smaller & cheaper)",
-    "llama-3.3-70b-versatile": "Meta — Llama 3.3 70B (strong general model)",
-    "llama-3.1-8b-instant": "Meta — Llama 3.1 8B Instant (fast & cheap)",
-    "qwen/qwen3-32b": "Alibaba — Qwen3-32B (very large model)",
-    "moonshotai/kimi-k2-instruct-0905": "MoonshotAI — kimi-k2-instruct (instruct-tuned)",
-}
-
-# Merge into a single ordered dict to show Groq first, then fallbacks
-model_options = {}
-model_options.update(groq_models)
-model_options.update(fallback_models)
-
-# Build the sidebar selectbox (display user-friendly labels, but use model id as value)
-model_keys = list(model_options.keys())
-model_labels = [model_options[k] for k in model_keys]
-selected_index = 0  # default to first (groq/compound if present)
-
-# Display a nicer selectbox with labels but keep the id as the actual selection
-model_label = st.sidebar.selectbox("Choose AI Model", options=model_labels, index=selected_index)
-# find the model id corresponding to chosen label
-model_name = model_keys[model_labels.index(model_label)]
-
-# Warn user if they selected a model owned by another provider (optional)
-if model_name.startswith("openai/") or model_name.startswith("qwen/") or model_name.startswith("moonshotai/"):
-    st.sidebar.caption("Note: selected model is a fallback. Some models may require special access or billing.")
-
+model_name = st.sidebar.selectbox(
+    "Choose AI Model",
+    options=list(model_options.keys()),
+    format_func=lambda x: model_options[x],
+    index=0,
+)
 
 temperature = st.sidebar.slider(
     "Temperature (creativity)",
@@ -244,9 +187,7 @@ if log_summary:
 
 # --- Helper Functions ---
 def validate_url(url: str) -> dict:
-    """Validate URL and check for potentially problematic domains"""
-    
-    # Blocked/sensitive domain patterns
+    """Validate URL and check for problematic domains"""
     blocked_patterns = [
         "bank", "paypal", "stripe", "payment",
         "login", "signin", "auth", "account",
@@ -255,122 +196,71 @@ def validate_url(url: str) -> dict:
         "gov", "military", "defense",
         "private", "internal", "intranet"
     ]
-    
-    # Suspicious TLDs
     suspicious_tlds = [".onion", ".i2p"]
-    
     try:
         parsed = urlparse(url.lower())
-        
-        # Check if URL has scheme
         if not parsed.scheme:
             return {"valid": False, "error": "Invalid URL: Missing http:// or https://"}
-        
-        # Only allow http and https
         if parsed.scheme not in ["http", "https"]:
             return {"valid": False, "error": "Only HTTP and HTTPS protocols are allowed"}
-        
-        # Check for localhost/private IPs
         if any(x in parsed.netloc for x in ["localhost", "127.0.0.1", "0.0.0.0", "192.168.", "10."]):
             return {"valid": False, "error": "Cannot scrape local or private network addresses"}
-        
-        # Check for blocked patterns
         for pattern in blocked_patterns:
             if pattern in parsed.netloc or pattern in parsed.path:
-                return {
-                    "valid": False, 
-                    "error": f"This appears to be a sensitive website ({pattern}). Scraping is not allowed for security and privacy reasons."
-                }
-        
-        # Check for suspicious TLDs
+                return {"valid": False, "error": f"This appears to be a sensitive website ({pattern}). Scraping is not allowed for security and privacy reasons."}
         for tld in suspicious_tlds:
             if parsed.netloc.endswith(tld):
                 return {"valid": False, "error": "This domain type is not supported"}
-        
         return {"valid": True}
-        
     except Exception as e:
         return {"valid": False, "error": f"Invalid URL format: {str(e)}"}
 
 
 def check_robots_txt(url: str) -> dict:
-    """Check if scraping is allowed by robots.txt"""
+    """Check robots.txt for scraping permission"""
     try:
         parsed = urlparse(url)
         robots_url = f"{parsed.scheme}://{parsed.netloc}/robots.txt"
-        
         response = requests.get(robots_url, timeout=5)
         if response.status_code == 200:
             robots_content = response.text.lower()
-            
-            # Simple check for disallow rules
             if "disallow: /" in robots_content and "user-agent: *" in robots_content:
-                return {
-                    "allowed": False,
-                    "warning": "This website's robots.txt discourages scraping. Please respect their wishes."
-                }
-        
+                return {"allowed": False, "warning": "This website's robots.txt discourages scraping. Please respect their wishes."}
         return {"allowed": True}
     except:
-        # If robots.txt doesn't exist or can't be accessed, proceed with caution
         return {"allowed": True, "warning": "Could not check robots.txt"}
 
 
 def scrape_website(url: str) -> dict:
     """Scrape content from a website with safety checks"""
     try:
-        # Validate URL first
         validation = validate_url(url)
         if not validation["valid"]:
             logger.log_error("URL_VALIDATION_FAILED", validation["error"], {"url": url})
             return {"success": False, "error": validation["error"]}
-        
-        # Check robots.txt
         robots_check = check_robots_txt(url)
         if not robots_check.get("allowed", True):
             logger.log_error("ROBOTS_TXT_DISALLOW", robots_check["warning"], {"url": url})
             return {"success": False, "error": robots_check["warning"]}
-        
         logger.log_event("WEBSITE_SCRAPE_START", {"url": url})
-        
         headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
         }
-
         response = requests.get(url, headers=headers, timeout=15)
         response.raise_for_status()
-
         soup = BeautifulSoup(response.text, "html.parser")
-
-        # Remove unwanted elements
         for element in soup(["script", "style", "nav", "footer", "header", "aside", "iframe"]):
             element.decompose()
-
-        # Extract title
         title = soup.find("title")
         title_text = title.get_text(strip=True) if title else "No title"
-
-        # Extract main content
         main_content = soup.find("main") or soup.find("article") or soup.find("body")
-
         if main_content:
             text = main_content.get_text(separator=" ", strip=True)
         else:
             text = soup.get_text(separator=" ", strip=True)
-
-        # Clean text
         text = " ".join(text.split())
-        
         logger.log_website_scraping(url, len(text), success=True)
-
-        return {
-            "success": True, 
-            "title": title_text, 
-            "content": text, 
-            "url": url,
-            "warning": robots_check.get("warning")
-        }
-
+        return {"success": True, "title": title_text, "content": text, "url": url, "warning": robots_check.get("warning")}
     except requests.exceptions.RequestException as e:
         error_msg = f"Failed to fetch URL: {str(e)}"
         logger.log_error("WEBSITE_SCRAPE_ERROR", error_msg, {"url": url})
@@ -382,84 +272,98 @@ def scrape_website(url: str) -> dict:
 
 
 def get_embeddings():
-    """Get embeddings model"""
+    """Return HuggingFace embeddings instance"""
     try:
         return HuggingFaceEmbeddings(
-            model_name="sentence-transformers/all-MiniLM-L6-v2", model_kwargs={"device": "cpu"}
+            model_name="sentence-transformers/all-MiniLM-L6-v2",
+            model_kwargs={"device": "cpu"}
         )
     except Exception as e:
         logger.log_error("EMBEDDINGS_ERROR", str(e))
         raise
 
+
 def create_vectordb(documents):
-    """Create a new vector database from documents (safe: clears old persist dir first)"""
+    """Create a new vector database from documents using FAISS in-memory."""
     try:
         logger.log_event("VECTORDB_CREATE_START", {"num_documents": len(documents)})
-        
         embeddings = get_embeddings()
         
-        # Use an explicit persist directory so files are predictable
-        persist_dir = "chroma_db"
-        
-        # Remove old directory if it exists to avoid leftover/corrupted files
-        try:
-            import shutil
-            if os.path.exists(persist_dir):
-                shutil.rmtree(persist_dir)
-                logger.log_event("VECTORDB_PERSIST_CLEANED", {"persist_dir": persist_dir})
-        except Exception as e:
-            logger.log_error("VECTORDB_CLEANUP_ERROR", str(e), {"persist_dir": persist_dir})
-        
-        vectordb = Chroma.from_documents(
-            documents=documents,
-            embedding=embeddings,
-            persist_directory=persist_dir,
-            collection_name="pdf_collection"
-        )
-        
-        logger.log_event("VECTORDB_CREATE_SUCCESS", {"num_documents": len(documents), "persist_dir": persist_dir})
+        # Use FAISS directly to avoid Windows file lock/corruption issues
+        vectordb = FAISS.from_documents(documents=documents, embedding=embeddings)
+        logger.log_event("VECTORDB_CREATE_SUCCESS", {
+            "num_documents": len(documents),
+            "store": "faiss_in_memory"
+        })
         return vectordb
+            
     except Exception as e:
         logger.log_error("VECTORDB_CREATE_ERROR", str(e), {"num_documents": len(documents)})
         st.error(f"Error creating vector database: {e}")
         return None
 
 
-
 def get_llm(model: str, temp: float = 0.7, max_tok: int = 2048):
-    """Get Groq LLM instance with custom parameters"""
+    """Return a Groq LLM instance for Groq-compatible models."""
     try:
+        # Get API key from secrets or environment
         api_key = None
-
         if hasattr(st, "secrets") and "GROQ_API_KEY" in st.secrets:
             api_key = st.secrets["GROQ_API_KEY"]
-
         if not api_key:
             api_key = os.getenv("GROQ_API_KEY")
-
+        
         if not api_key or api_key == "your-groq-api-key-here":
-            logger.log_error("LLM_INIT_ERROR", "Missing API key")
-            st.error("⚠️ Please add your GROQ_API_KEY!")
-            st.info(
-                """
-            **How to add your API key:**
-            1. Get a free API key from: https://console.groq.com/keys
-            2. Add it to `.streamlit/secrets.toml`:
-               ```
-               GROQ_API_KEY = "your-actual-key-here"
-               ```
-            3. Or set environment variable: `set GROQ_API_KEY=your-key`
-            """
-            )
-            st.stop()
-
+            logger.log_error("LLM_INIT_ERROR", "Missing or invalid API key")
+            return None
+        
         return ChatGroq(
-            model=model, groq_api_key=api_key, temperature=temp, max_tokens=max_tok, streaming=False
+            model=model,
+            groq_api_key=api_key,
+            temperature=temp,
+            max_tokens=max_tok,
+            streaming=False
         )
     except Exception as e:
         logger.log_error("LLM_INIT_ERROR", str(e), {"model": model})
-        st.error(f"Error initializing Groq: {e}")
-        st.stop()
+        return None
+
+
+def extract_llm_response(llm, prompt: str) -> str:
+    """
+    FIXED: Robust LLM response extraction that handles ALL response types
+    This fixes the "Got unknown type H/Y" errors
+    """
+    try:
+        # Try invoke method (modern LangChain)
+        response = llm.invoke(prompt)
+        
+        # Handle different response types
+        if hasattr(response, 'content'):
+            # AIMessage with content attribute
+            return str(response.content)
+        elif isinstance(response, str):
+            # Direct string response
+            return response
+        elif isinstance(response, dict) and 'text' in response:
+            # Dict with text key
+            return response['text']
+        elif isinstance(response, dict) and 'content' in response:
+            # Dict with content key
+            return response['content']
+        else:
+            # Fallback: convert to string
+            response_str = str(response)
+            # Log the response type for debugging
+            logger.log_event("LLM_RESPONSE_TYPE", {
+                "type": str(type(response)),
+                "preview": response_str[:100]
+            })
+            return response_str
+            
+    except Exception as e:
+        logger.log_error("LLM_INVOKE_ERROR", str(e))
+        return f"Error calling LLM: {str(e)}"
 
 
 # --- Main Layout: Two Columns ---
@@ -478,60 +382,52 @@ with col1:
                 try:
                     logger.log_event("PDF_UPLOAD", {"filename": uploaded_file.name})
                     
-                    # Clear old vector database if it exists
+                    # Clear old vector database
                     if "pdf_vectordb" in st.session_state:
                         try:
-                            old_vectordb = st.session_state.pdf_vectordb
-                            old_vectordb.delete_collection()
+                            del st.session_state.pdf_vectordb
                             logger.log_event("VECTORDB_CLEARED", {"message": "Old vector database cleared"})
                         except Exception as e:
                             logger.log_error("VECTORDB_CLEAR_ERROR", str(e))
-                        
-                        # Remove from session state
-                        del st.session_state.pdf_vectordb
                     
-                    # Clear old messages
-                    if "pdf_messages" in st.session_state:
-                        st.session_state.pdf_messages = []
-                    
-                    # Reset processed flag
+                    # Clear chat history
+                    st.session_state.pdf_messages = []
                     st.session_state.pdf_processed = False
                     
+                    # Save PDF to temp file
                     temp_pdf = tempfile.NamedTemporaryFile(delete=False, suffix=".pdf")
                     temp_pdf.write(uploaded_file.read())
                     temp_pdf.close()
-
+                    
+                    # Load and process PDF
                     loader = PyPDFLoader(temp_pdf.name)
                     docs = loader.load()
-
+                    
                     if not docs:
                         logger.log_error("PDF_PROCESSING_ERROR", "No text extracted", {"filename": uploaded_file.name})
                         st.error("Could not extract text from PDF. Please try another file.")
                     else:
                         text_splitter = RecursiveCharacterTextSplitter(
-                            chunk_size=1000, chunk_overlap=200
+                            chunk_size=1000,
+                            chunk_overlap=200
                         )
                         splits = text_splitter.split_documents(docs)
-
+                        
                         vectordb = create_vectordb(splits)
-
                         if vectordb:
                             st.session_state.pdf_vectordb = vectordb
                             st.session_state.pdf_processed = True
                             st.session_state.pdf_name = uploaded_file.name
-                            
                             logger.log_pdf_processing(uploaded_file.name, len(splits), success=True)
-                            
-                            st.success(
-                                f"✅ PDF processed! {len(splits)} chunks indexed from '{uploaded_file.name}'"
-                            )
+                            st.success(f"✅ PDF processed! {len(splits)} chunks indexed from '{uploaded_file.name}'")
                             st.info("💬 Previous chat history cleared. Ready for new questions!")
-
+                    
+                    # Clean up temp file
                     try:
                         os.unlink(temp_pdf.name)
                     except:
                         pass
-
+                        
                 except Exception as e:
                     logger.log_error("PDF_PROCESSING_ERROR", str(e), {"filename": uploaded_file.name})
                     st.error(f"Error processing PDF: {e}")
@@ -542,34 +438,47 @@ with col1:
     if "pdf_messages" not in st.session_state:
         st.session_state.pdf_messages = []
 
-    # Display PDF chat history
-    pdf_chat_container = st.container(height=400)
+    pdf_chat_container = st.container()
     with pdf_chat_container:
         for message in st.session_state.pdf_messages:
             with st.chat_message(message["role"]):
                 st.markdown(message["content"])
 
-    # PDF Chat Input
     if st.session_state.get("pdf_processed"):
         st.caption(f"💬 Chatting about: {st.session_state.get('pdf_name', 'PDF')}")
-
         if pdf_prompt := st.chat_input("Ask about the PDF...", key="pdf_chat"):
             st.session_state.pdf_messages.append({"role": "user", "content": pdf_prompt})
-
+            
             with pdf_chat_container:
                 with st.chat_message("user"):
                     st.markdown(pdf_prompt)
-
+                    
                 with st.chat_message("assistant"):
                     with st.spinner("Analyzing PDF..."):
                         try:
                             vectordb = st.session_state.pdf_vectordb
                             retriever = vectordb.as_retriever(search_kwargs={"k": 4})
-                            pdf_docs = retriever.invoke(pdf_prompt)
-                            pdf_context = "\n\n".join([doc.page_content for doc in pdf_docs])
+                            
+                            # Retrieve relevant documents
+                            try:
+                                pdf_docs = retriever.invoke(pdf_prompt)
+                            except Exception as retr_err:
+                                logger.log_error("RETRIEVAL_ERROR", str(retr_err))
+                                pdf_docs = []
 
+                            pdf_context = "\n\n".join([
+                                getattr(d, "page_content", str(d)) for d in pdf_docs
+                            ]) if pdf_docs else ""
+                            
                             llm = get_llm(model_name, temperature, max_tokens)
-
+                            if llm is None:
+                                error_msg = "⚠️ PDF mode requires a Groq model and valid GROQ_API_KEY. Please configure in Settings or .env file."
+                                st.error(error_msg)
+                                st.session_state.pdf_messages.append({"role": "assistant", "content": error_msg})
+                                logger.log_event("PDF_ANSWER_SKIPPED", {"model_selected": model_name})
+                                st.rerun()
+                            
+                            # Create prompt
                             answer_prompt = """You are an expert AI assistant analyzing a PDF document. You have NO access to the internet or external information.
 
 PDF Content:
@@ -589,45 +498,26 @@ STRICT INSTRUCTIONS:
 Question: {question}
 
 Answer (based ONLY on the PDF content above):"""
-
+                            
                             prompt_template = ChatPromptTemplate.from_template(answer_prompt)
                             formatted_prompt = prompt_template.format(
-                                pdf_context=pdf_context
-                                if pdf_context
-                                else "No relevant content found in PDF",
+                                pdf_context=pdf_context if pdf_context else "No relevant content found in PDF",
                                 question=pdf_prompt,
                             )
-
-                            response = llm.invoke(formatted_prompt)
-                            answer = response.content
-
-                            # ---- Show the answer in the chat normally ----
+                            
+                            # Get answer using improved extraction
+                            answer = extract_llm_response(llm, formatted_prompt)
+                            
                             st.markdown(answer)
-
-                            # ---- Also save to PDF chat history ----
                             st.session_state.pdf_messages.append({"role": "assistant", "content": answer})
                             logger.log_chat_interaction("PDF", len(pdf_prompt), len(answer))
-
-                            # ---- Dedicated full-answer expander (separate UI area, prevents overlap) ----
-                            with st.expander("📚 Full PDF Answer (expand to view)", expanded=False):
-                                st.write(answer)
-                                # Optional: add a download link so user can open/save the exact output
-                                try:
-                                    from io import BytesIO
-                                    b = BytesIO(answer.encode("utf-8"))
-                                    st.download_button("⬇️ Download full answer (txt)", data=b, file_name="pdf_answer.txt", mime="text/plain")
-                                except Exception:
-                                    pass
-
-
+                            
                         except Exception as e:
                             error_msg = f"Error: {str(e)}"
                             logger.log_error("PDF_CHAT_ERROR", str(e), {"question": pdf_prompt[:100]})
                             st.error(error_msg)
-                            st.session_state.pdf_messages.append(
-                                {"role": "assistant", "content": error_msg}
-                            )
-
+                            st.session_state.pdf_messages.append({"role": "assistant", "content": error_msg})
+            
             st.rerun()
     else:
         st.info("👆 Upload a PDF and click 'Process PDF' to start chatting!")
@@ -638,7 +528,6 @@ with col2:
     st.header("🌐 Website Chatbot")
     st.caption("Enter a website URL and ask questions about its content")
     
-    # Ethical usage disclaimer
     with st.expander("⚠️ Responsible Web Scraping Guidelines"):
         st.markdown("""
         **Please use this tool responsibly:**
@@ -667,23 +556,23 @@ with col2:
         """)
 
     website_url_input = st.text_input(
-        "Enter Website URL", placeholder="https://example.com", key="website_url_input"
+        "Enter Website URL",
+        placeholder="https://example.com",
+        key="website_url_input"
     )
 
     if website_url_input:
         if st.button("🔍 Scrape Website", type="primary", key="scrape_button"):
             with st.spinner("Validating and scraping website..."):
                 result = scrape_website(website_url_input)
-
                 if result["success"]:
                     st.session_state.website_content = result["content"]
                     st.session_state.website_title = result["title"]
                     st.session_state.scraped_url = result["url"]
                     st.session_state.website_processed = True
+                    st.session_state.website_messages = []  # Clear chat history
                     st.success(f"✅ Website scraped: {result['title']}")
                     st.caption(f"Content length: {len(result['content'])} characters")
-                    
-                    # Show warning if robots.txt had concerns
                     if result.get("warning"):
                         st.warning(f"⚠️ {result['warning']}")
                 else:
@@ -692,42 +581,45 @@ with col2:
 
     st.divider()
 
-    # Website Chat Interface
     if "website_messages" not in st.session_state:
         st.session_state.website_messages = []
 
-    # Display website chat history
-    web_chat_container = st.container(height=400)
+    web_chat_container = st.container()
     with web_chat_container:
         for message in st.session_state.website_messages:
             with st.chat_message(message["role"]):
                 st.markdown(message["content"])
 
-    # Website Chat Input
     if st.session_state.get("website_processed"):
         st.caption(f"💬 Chatting about: {st.session_state.get('website_title', 'Website')}")
-
         if web_prompt := st.chat_input("Ask about the website...", key="web_chat"):
             st.session_state.website_messages.append({"role": "user", "content": web_prompt})
-
+            
             with web_chat_container:
                 with st.chat_message("user"):
                     st.markdown(web_prompt)
-
+                    
                 with st.chat_message("assistant"):
                     with st.spinner("Analyzing website..."):
                         try:
                             website_content = st.session_state.website_content
                             website_title = st.session_state.website_title
                             website_url = st.session_state.scraped_url
-
-                            # Limit content to avoid token limits
+                            
+                            # Truncate if too long
                             max_content_length = 15000
                             if len(website_content) > max_content_length:
                                 website_content = website_content[:max_content_length] + "..."
-
+                            
                             llm = get_llm(model_name, temperature, max_tokens)
-
+                            if llm is None:
+                                error_msg = "⚠️ Website mode requires a Groq model and valid GROQ_API_KEY. Please configure in Settings or .env file."
+                                st.error(error_msg)
+                                st.session_state.website_messages.append({"role": "assistant", "content": error_msg})
+                                logger.log_event("WEBSITE_ANSWER_SKIPPED", {"model_selected": model_name})
+                                st.rerun()
+                            
+                            # Create prompt
                             answer_prompt = """You are an expert AI assistant analyzing website content.
 
 Website: {website_title}
@@ -747,7 +639,7 @@ Instructions:
 Question: {question}
 
 Answer:"""
-
+                            
                             prompt_template = ChatPromptTemplate.from_template(answer_prompt)
                             formatted_prompt = prompt_template.format(
                                 website_title=website_title,
@@ -755,37 +647,20 @@ Answer:"""
                                 website_content=website_content,
                                 question=web_prompt,
                             )
-
-                            response = llm.invoke(formatted_prompt)
-                            answer = response.content
-
-                            # ---- Show the answer in the chat normally ----
+                            
+                            # Get answer using improved extraction
+                            answer = extract_llm_response(llm, formatted_prompt)
+                            
                             st.markdown(answer)
-
-                            # ---- Also save to website chat history ----
                             st.session_state.website_messages.append({"role": "assistant", "content": answer})
                             logger.log_chat_interaction("WEBSITE", len(web_prompt), len(answer))
-
-                            # ---- Dedicated full-answer expander (separate UI area, prevents overlap) ----
-                            with st.expander("🌐 Full Website Answer (expand to view)", expanded=False):
-                                st.write(answer)
-                                # Optional: add a download link so user can open/save the exact output
-                                try:
-                                    from io import BytesIO
-                                    b = BytesIO(answer.encode("utf-8"))
-                                    st.download_button("⬇️ Download full answer (txt)", data=b, file_name="website_answer.txt", mime="text/plain")
-                                except Exception:
-                                    pass
-
-
+                            
                         except Exception as e:
                             error_msg = f"Error: {str(e)}"
                             logger.log_error("WEBSITE_CHAT_ERROR", str(e), {"question": web_prompt[:100]})
                             st.error(error_msg)
-                            st.session_state.website_messages.append(
-                                {"role": "assistant", "content": error_msg}
-                            )
-
+                            st.session_state.website_messages.append({"role": "assistant", "content": error_msg})
+            
             st.rerun()
     else:
         st.info("👆 Enter a website URL and click 'Scrape Website' to start chatting!")

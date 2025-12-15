@@ -45,16 +45,16 @@ An intelligent dual-mode chatbot application that allows users to interact with 
 - **Streamlit** - Web interface
 - **LangChain** - AI orchestration
 - **Groq** - Fast LLM inference
-- **ChromaDB** - Vector database for PDFs
+- **FAISS** - In-memory vector database for PDFs
 - **HuggingFace** - Text embeddings
 - **BeautifulSoup** - Web scraping
 - **Requests** - HTTP client
 
+# NEW:
 **AI Models:**
 - Llama 3.3 70B (recommended)
-- Llama 3.2 90B (most powerful)
-- Mixtral 8x7B (large context)
 - Llama 3.1 8B (fastest)
+- Mixtral 8x7B (large context)
 
 ## Architecture
 
