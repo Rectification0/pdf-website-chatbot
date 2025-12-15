@@ -1,6 +1,7 @@
 import streamlit as st
 import tempfile
 import os
+os.environ["CUDA_VISIBLE_DEVICES"] = ""
 from datetime import datetime
 import json
 import socket
@@ -37,7 +38,6 @@ class ChatbotLogger:
             self.log_file = "chatbot_web_logs.json"
             self.deployment_type = "WEB"
         self._initialize_log_file()
-    
     def _is_local_deployment(self):
         """Detect if running locally or on Streamlit Cloud"""
         try:
@@ -132,6 +132,18 @@ class ChatbotLogger:
             }
         except:
             return None
+# --- Cache the Embedding Model (CRITICAL FIX) ---
+@st.cache_resource
+def get_shared_embeddings():
+    """
+    Loads the embedding model ONLY ONCE and shares it across all users.
+    This prevents the app from crashing due to running out of memory.
+    """
+    return HuggingFaceEmbeddings(
+        model_name="sentence-transformers/all-MiniLM-L6-v2",
+        model_kwargs={'device': 'cpu'},
+        encode_kwargs={'normalize_embeddings': True}
+    )
 
 
 # Initialize logger
@@ -283,26 +295,24 @@ def get_embeddings():
         raise
 
 
-def create_vectordb(documents):
-    """Create a new vector database from documents using FAISS in-memory."""
+def create_vector_db(docs):
     try:
-        logger.log_event("VECTORDB_CREATE_START", {"num_documents": len(documents)})
-        embeddings = get_embeddings()
+        logger.log_event("VECTORDB_CREATE_START", {"num_documents": len(docs)})
         
-        # Use FAISS directly to avoid Windows file lock/corruption issues
-        vectordb = FAISS.from_documents(documents=documents, embedding=embeddings)
-        logger.log_event("VECTORDB_CREATE_SUCCESS", {
-            "num_documents": len(documents),
-            "store": "faiss_in_memory"
-        })
-        return vectordb
+        # USE THE CACHED MODEL instead of loading a new one
+        embeddings = get_shared_embeddings()
+        
+        # Create VectorStore (FAISS)
+        vectorstore = FAISS.from_documents(docs, embeddings)
+        
+        logger.log_event("VECTORDB_CREATE_SUCCESS", {"num_documents": len(docs)})
+        return vectorstore
             
     except Exception as e:
-        logger.log_error("VECTORDB_CREATE_ERROR", str(e), {"num_documents": len(documents)})
+        logger.log_error("VECTORDB_CREATE_ERROR", str(e), {"num_documents": len(docs)})
         st.error(f"Error creating vector database: {e}")
         return None
-
-
+    
 def get_llm(model: str, temp: float = 0.7, max_tok: int = 2048):
     """Return a Groq LLM instance for Groq-compatible models."""
     try:
@@ -407,13 +417,10 @@ with col1:
                         logger.log_error("PDF_PROCESSING_ERROR", "No text extracted", {"filename": uploaded_file.name})
                         st.error("Could not extract text from PDF. Please try another file.")
                     else:
-                        text_splitter = RecursiveCharacterTextSplitter(
-                            chunk_size=1000,
-                            chunk_overlap=200
-                        )
+                        text_splitter = RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=50)  # Smaller chunks
                         splits = text_splitter.split_documents(docs)
                         
-                        vectordb = create_vectordb(splits)
+                        vectordb = create_vector_db(splits)
                         if vectordb:
                             st.session_state.pdf_vectordb = vectordb
                             st.session_state.pdf_processed = True
