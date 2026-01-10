@@ -1,0 +1,1 @@
+﻿transformers 4.57.3 has requirement tokenizers<=0.23.0,>=0.22.0, but you have tokenizers 0.20.3.
