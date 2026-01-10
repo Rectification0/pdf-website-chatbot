@@ -23,3 +23,7 @@ temp.pdf
 # Log files
 chatbot_local_logs.json
 chatbot_web_logs.json
+
+# Generated reports
+pip_*.txt
+pylint_report*.txt
