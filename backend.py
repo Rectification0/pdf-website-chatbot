@@ -204,11 +204,20 @@ def check_robots_txt(url: str) -> dict:
         response = requests.get(robots_url, timeout=5)
         if response.status_code == 200:
             robots_content = response.text.lower()
-            if "disallow: /" in robots_content and "user-agent: *" in robots_content:
-                return {
-                    "allowed": False,
-                    "warning": "This website's robots.txt discourages scraping. Please respect their wishes.",
-                }
+            # Check for exact "Disallow: /" pattern (not "Disallow: /admin" etc.)
+            # Look for "disallow: /" followed by whitespace or newline
+            if "user-agent: *" in robots_content:
+                lines = robots_content.split('\n')
+                for line in lines:
+                    line = line.strip()
+                    # Check if line is exactly "disallow: /" or "disallow: /" followed by whitespace
+                    if line.startswith("disallow:"):
+                        path = line.replace("disallow:", "").strip()
+                        if path == "/":
+                            return {
+                                "allowed": False,
+                                "warning": "This website's robots.txt discourages scraping. Please respect their wishes.",
+                            }
         return {"allowed": True}
     except Exception:
         return {"allowed": True, "warning": "Could not check robots.txt"}
