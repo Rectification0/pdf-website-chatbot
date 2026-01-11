@@ -23,8 +23,8 @@ sys.path.append(".")
 # Mock streamlit to avoid import errors during testing
 sys.modules["streamlit"] = Mock()
 
-# Import app functions after mocking streamlit
-from app import (
+# Import backend functions after mocking streamlit(
+from backend import (
     ChatbotLogger,
     validate_url,
     check_robots_txt,
@@ -50,7 +50,7 @@ class TestChatbotLogger:
             os.remove(self.test_log_file)
         os.rmdir(self.temp_dir)
 
-    @patch("app.socket.gethostname")
+    @patch("backend.socket.gethostname")
     def test_is_local_deployment_local(self, mock_hostname):
         """Test local deployment detection"""
         mock_hostname.return_value = "my-laptop"
@@ -58,7 +58,7 @@ class TestChatbotLogger:
         assert logger.is_local == True
         assert logger.deployment_type == "LOCAL"
 
-    @patch("app.socket.gethostname")
+    @patch("backend.socket.gethostname")
     @patch.dict(os.environ, {"STREAMLIT_SHARING_MODE": "true"})
     def test_is_local_deployment_web(self, mock_hostname):
         """Test web deployment detection"""
@@ -163,7 +163,7 @@ class TestURLValidation:
 class TestRobotsTxt:
     """Test cases for robots.txt checking"""
 
-    @patch("app.requests.get")
+    @patch("backend.requests.get")
     def test_check_robots_txt_allows_scraping(self, mock_get):
         """Test robots.txt that allows scraping"""
         mock_response = Mock()
@@ -174,7 +174,7 @@ class TestRobotsTxt:
         result = check_robots_txt("https://example.com")
         assert result["allowed"] == True
 
-    @patch("app.requests.get")
+    @patch("backend.requests.get")
     def test_check_robots_txt_disallows_scraping(self, mock_get):
         """Test robots.txt that disallows scraping"""
         mock_response = Mock()
@@ -186,7 +186,7 @@ class TestRobotsTxt:
         assert result["allowed"] == False
         assert "discourages scraping" in result["warning"]
 
-    @patch("app.requests.get")
+    @patch("backend.requests.get")
     def test_check_robots_txt_not_found(self, mock_get):
         """Test when robots.txt doesn't exist"""
         mock_get.side_effect = Exception("Not found")
@@ -199,9 +199,9 @@ class TestRobotsTxt:
 class TestWebScraping:
     """Test cases for web scraping functionality"""
 
-    @patch("app.validate_url")
-    @patch("app.check_robots_txt")
-    @patch("app.requests.get")
+    @patch("backend.validate_url")
+    @patch("backend.check_robots_txt")
+    @patch("backend.requests.get")
     def test_scrape_website_success(self, mock_get, mock_robots, mock_validate):
         """Test successful website scraping"""
         # Mock validation and robots.txt check
@@ -233,7 +233,7 @@ class TestWebScraping:
         assert "This is test content" in result["content"]
         assert "console.log" not in result["content"]  # Script should be removed
 
-    @patch("app.validate_url")
+    @patch("backend.validate_url")
     def test_scrape_website_invalid_url(self, mock_validate):
         """Test scraping with invalid URL"""
         mock_validate.return_value = {"valid": False, "error": "Invalid URL"}
@@ -243,8 +243,8 @@ class TestWebScraping:
         assert result["success"] == False
         assert result["error"] == "Invalid URL"
 
-    @patch("app.validate_url")
-    @patch("app.check_robots_txt")
+    @patch("backend.validate_url")
+    @patch("backend.check_robots_txt")
     def test_scrape_website_robots_disallow(self, mock_robots, mock_validate):
         """Test scraping when robots.txt disallows"""
         mock_validate.return_value = {"valid": True}
@@ -255,9 +255,9 @@ class TestWebScraping:
         assert result["success"] == False
         assert "Robots.txt disallows" in result["error"]
 
-    @patch("app.validate_url")
-    @patch("app.check_robots_txt")
-    @patch("app.requests.get")
+    @patch("backend.validate_url")
+    @patch("backend.check_robots_txt")
+    @patch("backend.requests.get")
     def test_scrape_website_http_error(self, mock_get, mock_robots, mock_validate):
         """Test scraping with HTTP error"""
         mock_validate.return_value = {"valid": True}
