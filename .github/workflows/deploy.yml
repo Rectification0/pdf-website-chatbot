@@ -1,4 +1,4 @@
-name: Deploy to Streamlit Community Cloud
+name: Test and Validate
 
 on:
   push:
@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
 
 jobs:
-  deploy:
+  test:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -16,12 +16,11 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Install all packages
+      - name: Install dependencies
         run: |
           pip install --upgrade pip
-          pip install langchain langchain-community langchain-chroma langchain-ollama beautifulsoup4 requests pypdf unstructured[all-docs] firecrawl-py python-dotenv streamlit
+          pip install -r requirements.txt
 
-      - name: Deploy to Streamlit Cloud
-        uses: streamlit/streamlit-deploy@v1
-        with:
-          app-url: https://pdf-rag-chat.streamlit.app   # ← CHANGE THIS LINE ONLY
+      - name: Run Tests
+        run: |
+          python -m pytest test_chatbot.py -v
