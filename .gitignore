@@ -1,0 +1,86 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual Environment
+venv/
+venv_*/
+env/
+.env
+.venv/
+
+# Streamlit
+# Keep config.toml if it has non-sensitive settings, otherwise ignore it too
+# .streamlit/config.toml
+.streamlit/secrets.toml
+
+# VS Code
+.vscode/
+
+# PyCharm
+.idea/
+
+# Logs
+*.log
+chatbot_*.json
+*_logs.json
+
+# Temporary Files
+*.tmp
+*.temp
+*.swp
+*~
+.DS_Store
+
+# OS generated files
+Thumbs.db
+ehthumbs.db
+
+# Documentation / QA reports (auto-generated)
+LINTER_REPORT.md
+QUALITY_ASSURANCE_SUMMARY.md
+TESTING_QUICKSTART.md
+UNIT_TESTING.md
+
+# Test artifacts
+tests/
+requirements-dev.txt
+
+# Claude Code internal files
+.claude/
+.playwright-mcp/
+TASKS.md
+
+# Pytest cache
+.pytest_cache/
+
+# Coverage
+.coverage
+coverage.xml
+htmlcov/
+
+# Type checker / linter caches
+.mypy_cache/
+.ruff_cache/
+
+# Uploaded / test PDFs (processed in memory, not source assets)
+*.pdf

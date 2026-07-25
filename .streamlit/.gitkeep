@@ -1,0 +1,2 @@
+# This file ensures the .streamlit directory is tracked by git
+# The actual secrets.toml and config.toml files are gitignored
